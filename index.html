@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NEON CHRONOS // SYSTEM FAILURE</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@300;500;700&display=swap" rel="stylesheet">
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <style>
+        :root {
+            --bg: #050505;
+            --surface: #111111;
+            --signal: #00F0FF;
+            --warning: #FF2A00;
+            --text-main: #E0E0E0;
+            --text-dim: #555;
+
+            --ease-snap: cubic-bezier(0.19, 1, 0.22, 1);
+            --ease-bounce-in: cubic-bezier(0.55, 0.085, 0.68, 0.53);
+            --ease-glide: cubic-bezier(0.45, 0.05, 0.55, 0.95);
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        html { background: var(--bg); }
+
+        body {
+            background-color: var(--bg);
+            color: var(--text-main);
+            font-family: 'JetBrains Mono', monospace;
+            overflow-x: hidden;
+            width: 100%;
+            cursor: none;
+        }
+
+        body.touch-device { cursor: auto; }
+        body.touch-device #cursor { display: none; }
+
+        ::selection { background: var(--signal); color: var(--bg); }
+
+        a { color: inherit; }
+
+        /* ===== BOOT OVERLAY ===== */
+        #boot {
+            position: fixed;
+            inset: 0;
+            z-index: 200;
+            background: var(--bg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 1rem;
+            transition: opacity 0.6s var(--ease-glide), visibility 0.6s;
+        }
+
+        #boot.hidden {
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+        }
+
+        #boot-log {
+            font-size: 0.75rem;
+            color: var(--signal);
+            width: min(80vw, 480px);
+            line-height: 1.8;
+        }
+
+        #boot-log .line { opacity: 0; animation: bootline 0.15s forwards; }
+        #boot-log .line.err { color: var(--warning); }
+
+        @keyframes bootline { to { opacity: 1; } }
+
+        #boot-bar {
+            width: min(80vw, 480px);
+            height: 2px;
+            background: var(--surface);
+            position: relative;
+            overflow: hidden;
+        }
+
+        #boot-bar span {
+            position: absolute;
+            inset: 0;
+            width: 0%;
+            background: var(--signal);
+            transition: width 1.6s var(--ease-glide);
+        }
+
+        /* ===== CUSTOM CURSOR ===== */
+        #cursor {
+            position: fixed;
+            top: 0; left: 0;
+            width: 18px; height: 18px;
+            border: 1px solid var(--signal);
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 9999;
+            transform: translate(-50%, -50%);
+            mix-blend-mode: difference;
+            transition: width 0.3s var(--ease-snap), height 0.3s var(--ease-snap),
+                        background-color 0.3s var(--ease-snap), border-color 0.3s var(--ease-snap);
+        }
+
+        #cursor::after {
+            content: attr(data-label);
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 0.55rem;
+            letter-spacing: 1px;
+            color: var(--warning);
+            opacity: 0;
+            transition: opacity 0.2s var(--ease-snap);
+            white-space: nowrap;
+        }
+
+        #cursor.hovered {
+            width: 68px; height: 68px;
+            background-color: rgba(0, 240, 255, 0.08);
+            border-color: var(--warning);
+            mix-blend-mode: normal;
+        }
+
+        #cursor.hovered::after { opacity: 1; }
+
+        /* ===== CANVAS ===== */
+        #canvas-container {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 0;
+        }
+
+        /* ===== VIGNETTE (depth without an image asset) ===== */
+        #vignette {
+            position: fixed;
+            inset: 0;
+            z-index: 1;
+            pointer-events: none;
+            background: radial-gradient(ellipse at center, transparent 35%, rgba(5,5,5,0.85) 100%);
+        }
+
+        /* A left-side scrim that deepens with scroll depth, keeping the copy column
+           legible even as the mesh distortion intensifies toward full entropy. */
+        #text-scrim {
+            position: fixed;
+            inset: 0;
+            z-index: 1;
+            pointer-events: none;
+            background: linear-gradient(to right, rgba(5,5,5,0.55) 0%, rgba(5,5,5,0.15) 55%, transparent 75%);
+            opacity: 0;
+            transition: opacity 0.3s var(--ease-glide);
+        }
+
+        /* ===== NOISE GRAIN ===== */
+        #noise {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 10;
+            opacity: 0.06;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.5' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+            mix-blend-mode: overlay;
+        }
+
+        /* ===== SCANLINES (entropy indicator) ===== */
+        #scanlines {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 11;
+            opacity: 0;
+            background: repeating-linear-gradient(
+                to bottom,
+                rgba(255, 42, 0, 0.06) 0px,
+                rgba(255, 42, 0, 0.06) 1px,
+                transparent 2px,
+                transparent 4px
+            );
+            transition: opacity 0.4s var(--ease-glide);
+        }
+
+        /* ===== HUD ===== */
+        #hud {
+            position: fixed;
+            top: 24px; left: 24px;
+            z-index: 50;
+            font-size: 0.7rem;
+            color: var(--text-dim);
+            letter-spacing: 0.5px;
+            pointer-events: none;
+            line-height: 1.6;
+        }
+
+        #hud span { color: var(--signal); }
+        #hud .entropy-val { color: var(--warning); }
+
+        #progress-rail {
+            position: fixed;
+            right: 24px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 2px;
+            height: 30vh;
+            background: var(--surface);
+            z-index: 50;
+        }
+
+        #progress-fill {
+            width: 100%;
+            height: 0%;
+            background: var(--signal);
+            transition: height 0.1s linear;
+        }
+
+        /* ===== LAYOUT ===== */
+        main {
+            position: relative;
+            z-index: 2;
+            padding: 0 5vw;
+        }
+
+        section {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            position: relative;
+        }
+
+        .kicker {
+            font-size: 0.75rem;
+            color: var(--signal);
+            letter-spacing: 3px;
+            margin-bottom: 1.2rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .kicker::before {
+            content: '';
+            display: inline-block;
+            width: 24px;
+            height: 1px;
+            background: var(--signal);
+        }
+
+        /* ===== SCROLL-REVEAL CHOREOGRAPHY ===== */
+        .reveal {
+            opacity: 0;
+            transform: translateY(28px);
+            transition: opacity 0.9s var(--ease-glide), transform 0.9s var(--ease-glide);
+        }
+
+        .reveal.in-view { opacity: 1; transform: translateY(0); }
+        .reveal:nth-child(2) { transition-delay: 0.08s; }
+        .reveal:nth-child(3) { transition-delay: 0.16s; }
+        .reveal:nth-child(4) { transition-delay: 0.24s; }
+
+        /* ===== GLITCH TYPOGRAPHY ===== */
+        h1 {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: clamp(3.2rem, 11vw, 11rem);
+            line-height: 0.86;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: -0.03em;
+            color: var(--signal);
+            position: relative;
+        }
+
+        .glitch {
+            position: relative;
+            display: inline-block;
+        }
+
+        .glitch::before,
+        .glitch::after {
+            content: attr(data-text);
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%;
+            overflow: hidden;
+            opacity: 0;
+        }
+
+        .glitch::before {
+            color: var(--warning);
+            z-index: -1;
+        }
+
+        .glitch::after {
+            color: #fff;
+            z-index: -1;
+        }
+
+        .glitch.active::before {
+            opacity: 0.8;
+            animation: glitch-shift-1 0.35s var(--ease-bounce-in);
+        }
+
+        .glitch.active::after {
+            opacity: 0.6;
+            animation: glitch-shift-2 0.35s var(--ease-bounce-in);
+        }
+
+        @keyframes glitch-shift-1 {
+            0%   { transform: translate(0, 0); clip-path: inset(0 0 90% 0); }
+            20%  { transform: translate(-6px, 2px); clip-path: inset(10% 0 60% 0); }
+            40%  { transform: translate(5px, -2px); clip-path: inset(40% 0 30% 0); }
+            60%  { transform: translate(-4px, 1px); clip-path: inset(60% 0 10% 0); }
+            80%  { transform: translate(3px, 0); clip-path: inset(80% 0 5% 0); }
+            100% { transform: translate(0, 0); clip-path: inset(0 0 100% 0); }
+        }
+
+        @keyframes glitch-shift-2 {
+            0%   { transform: translate(0, 0); clip-path: inset(80% 0 0 0); }
+            25%  { transform: translate(6px, -1px); clip-path: inset(30% 0 40% 0); }
+            50%  { transform: translate(-5px, 2px); clip-path: inset(50% 0 20% 0); }
+            75%  { transform: translate(4px, -1px); clip-path: inset(10% 0 70% 0); }
+            100% { transform: translate(0, 0); clip-path: inset(100% 0 0 0); }
+        }
+
+        .subtitle {
+            font-size: 1.05rem;
+            max-width: 42ch;
+            margin-top: 1.8rem;
+            line-height: 1.7;
+            color: var(--text-main);
+        }
+
+        .subtitle .signal { color: var(--signal); }
+        .subtitle .warn { color: var(--warning); }
+
+        .log-line {
+            font-size: 0.9rem;
+            opacity: 0.75;
+            display: block;
+        }
+
+        .cta {
+            margin-top: 2.5rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 0.85rem;
+            letter-spacing: 2px;
+            padding: 14px 26px;
+            border: 1px solid var(--signal);
+            width: fit-content;
+            text-decoration: none;
+            position: relative;
+            overflow: hidden;
+            transition: color 0.4s var(--ease-glide);
+        }
+
+        .cta::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: var(--signal);
+            transform: translateX(-101%);
+            transition: transform 0.45s var(--ease-snap);
+            z-index: -1;
+        }
+
+        .cta:hover { color: var(--bg); }
+        .cta:hover::before { transform: translateX(0); }
+
+        .cta span {
+            display: inline-block;
+            animation: nudge 1.6s var(--ease-glide) infinite;
+        }
+
+        @keyframes nudge {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(5px); }
+        }
+
+        /* ===== DATA GRID (section 2) ===== */
+        .data-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1px;
+            background: var(--surface);
+            margin-top: 3rem;
+            max-width: 640px;
+        }
+
+        .data-cell {
+            background: var(--bg);
+            padding: 1.2rem 1rem;
+            font-size: 0.7rem;
+            color: var(--text-dim);
+            transition: background 0.3s var(--ease-glide), color 0.3s var(--ease-glide);
+        }
+
+        .data-cell b {
+            display: block;
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 1.6rem;
+            color: var(--text-main);
+            font-weight: 500;
+            margin-bottom: 0.3rem;
+        }
+
+        .data-cell:hover {
+            background: rgba(0, 240, 255, 0.06);
+            color: var(--signal);
+        }
+
+        /* ===== FRAGMENTS (section 3) ===== */
+        .fragments {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.8rem;
+            margin-top: 2.5rem;
+            max-width: 60ch;
+        }
+
+        .fragment {
+            border: 1px solid #262626;
+            padding: 6px 12px;
+            font-size: 0.7rem;
+            color: var(--text-dim);
+            transition: border-color 0.3s var(--ease-glide), color 0.3s var(--ease-glide);
+        }
+
+        .fragment:hover {
+            border-color: var(--warning);
+            color: var(--warning);
+        }
+
+        /* ===== OUTRO ===== */
+        #outro {
+            align-items: flex-start;
+            padding-bottom: 12vh;
+        }
+
+        #outro h1 { font-size: clamp(2.2rem, 6vw, 4rem); color: #2a2a2a; }
+
+        #outro .subtitle { color: var(--text-dim); }
+
+        .reboot {
+            margin-top: 2rem;
+            background: none;
+            border: 1px solid var(--warning);
+            color: var(--warning);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            letter-spacing: 2px;
+            padding: 12px 24px;
+            cursor: none;
+            transition: background 0.3s var(--ease-glide), color 0.3s var(--ease-glide);
+        }
+
+        .reboot:hover { background: var(--warning); color: var(--bg); }
+
+        body.touch-device .reboot,
+        body.touch-device .cta { cursor: auto; }
+
+        footer {
+            position: fixed;
+            bottom: 20px; right: 30px;
+            font-size: 0.65rem;
+            color: var(--text-dim);
+            z-index: 50;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            display: flex;
+            gap: 16px;
+        }
+
+        /* ===== RESPONSIVE ===== */
+        @media (max-width: 720px) {
+            body { cursor: auto; }
+            #cursor { display: none; }
+            h1 { font-size: clamp(2.6rem, 14vw, 5rem); }
+            .data-grid { grid-template-columns: repeat(2, 1fr); max-width: 100%; }
+            #hud { font-size: 0.6rem; top: 16px; left: 16px; }
+            footer { right: 16px; bottom: 16px; font-size: 0.55rem; flex-direction: column; gap: 4px; text-align: right; }
+            #progress-rail { display: none; }
+            .subtitle { max-width: 100%; }
+            main { padding: 0 6vw; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .glitch.active::before, .glitch.active::after { animation: none; opacity: 0; }
+            .reveal { opacity: 1; transform: none; }
+            * { transition-duration: 0.01ms !important; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="boot">
+        <div id="boot-log"></div>
+        <div id="boot-bar"><span></span></div>
+    </div>
+
+    <div id="cursor" data-label=""></div>
+    <div id="canvas-container"></div>
+    <div id="vignette"></div>
+    <div id="text-scrim"></div>
+    <div id="noise"></div>
+    <div id="scanlines"></div>
+
+    <div id="hud">
+        SYS://NEON_CHRONOS<br>
+        T+<span id="clock-val">00:00:00</span><br>
+        ENTROPY: <span class="entropy-val" id="entropy-val">00.0%</span><br>
+        DEPTH: <span id="depth-val">000</span>m
+    </div>
+
+    <div id="progress-rail"><div id="progress-fill"></div></div>
+
+    <main>
+        <section id="intro">
+            <div class="kicker reveal">BOOT SEQUENCE // 09.07</div>
+            <h1 class="reveal"><span class="glitch" data-text="NEON CHRONOS">NEON CHRONOS</span></h1>
+            <p class="subtitle reveal">
+                This interface is <span class="warn">compromised</span>. Something has been recording every scroll, every pause, every hesitation — and replaying it back as noise. You are not browsing a website. You are excavating what's left of one.
+            </p>
+            <a href="#mesh" class="cta reveal">DESCEND <span>&#8595;</span></a>
+        </section>
+
+        <section id="mesh">
+            <div class="kicker reveal">LAYER 01 // MEMORY</div>
+            <h1 class="reveal">
+                <span class="glitch" data-text="DIGITAL">DIGITAL</span><br>
+                <span style="font-size:0.42em; color:var(--text-main); letter-spacing:-4px;">EROSION</span>
+            </h1>
+            <p class="subtitle reveal">
+                The mesh behind this text is not decoration — it's a live model of decay. Every pixel you scroll feeds the noise field driving it. <span class="signal">Scroll further and it forgets more.</span>
+            </p>
+            <div class="data-grid reveal">
+                <div class="data-cell"><b>0.9.2</b>BUILD</div>
+                <div class="data-cell"><b>48%</b>DISK SPARE</div>
+                <div class="data-cell"><b>∞</b>RETRY LOOP</div>
+            </div>
+        </section>
+
+        <section id="decay">
+            <div class="kicker reveal">LAYER 02 // FAILURE</div>
+            <h1 class="reveal">
+                <span class="glitch" data-text="TERMINAL" style="color:var(--warning)">TERMINAL</span><br>
+                FAILURE
+            </h1>
+            <p class="subtitle reveal">
+                <span class="log-line">&gt; UPLOAD COMPLETE — INTEGRITY UNVERIFIED</span>
+                <span class="log-line">&gt; DISK SPARE FALLING — 41%, 33%, 19%...</span>
+                <span class="log-line warn">&gt; REBOOT SEQUENCE CANCELLED BY ADMIN.</span>
+            </p>
+            <div class="fragments reveal">
+                <span class="fragment">core_dump.log</span>
+                <span class="fragment">session_0x4F</span>
+                <span class="fragment">ghost_process</span>
+                <span class="fragment">unindexed_frame</span>
+                <span class="fragment">null_signature</span>
+                <span class="fragment">last_known_state</span>
+            </div>
+        </section>
+
+        <section id="outro">
+            <div class="kicker reveal">LAYER 03 // END OF LINE</div>
+            <h1 class="reveal">END OF LINE</h1>
+            <p class="subtitle reveal">
+                There is nothing further to load. What you scrolled through won't render the same way twice — the noise field never repeats a seed. Reboot to watch it corrupt differently.
+            </p>
+            <button class="reboot reveal" onclick="location.reload()">[ REBOOT SYSTEM ]</button>
+        </section>
+    </main>
+
+    <footer>
+        <span>NEON CHRONOS</span>
+        <span>v.0.9.2 // GLSL_3.0</span>
+    </footer>
+
+    <script>
+        /* ================= BOOT SEQUENCE ================= */
+        const bootLines = [
+            '&gt; INITIALIZING KERNEL...',
+            '&gt; MOUNTING /dev/memory...',
+            '&gt; CHECKSUM MISMATCH ON SECTOR 0x2F',
+            '&gt; ATTEMPTING RECOVERY...',
+            '&gt; PARTIAL RECOVERY — CONTINUING',
+            '&gt; LOADING NEON_CHRONOS.SYS'
+        ];
+        const bootLog = document.getElementById('boot-log');
+        bootLines.forEach((line, i) => {
+            const el = document.createElement('div');
+            el.className = 'line' + (line.includes('MISMATCH') ? ' err' : '');
+            el.style.animationDelay = (i * 0.22) + 's';
+            el.innerHTML = line;
+            bootLog.appendChild(el);
+        });
+        requestAnimationFrame(() => {
+            document.querySelector('#boot-bar span').style.width = '100%';
+        });
+        setTimeout(() => {
+            document.getElementById('boot').classList.add('hidden');
+        }, 1700);
+
+        /* ================= CURSOR ================= */
+        const cursor = document.getElementById('cursor');
+        const isTouch = window.matchMedia('(pointer: coarse)').matches;
+        if (isTouch) document.body.classList.add('touch-device');
+
+        let mouseX = window.innerWidth / 2, mouseY = window.innerHeight / 2;
+        let cursorX = mouseX, cursorY = mouseY;
+
+        if (!isTouch) {
+            document.addEventListener('mousemove', (e) => {
+                mouseX = e.clientX;
+                mouseY = e.clientY;
+                const target = e.target.closest('a, button, .glitch, .fragment, .data-cell');
+                if (target) {
+                    cursor.classList.add('hovered');
+                    cursor.setAttribute('data-label', target.tagName === 'H1' || target.classList.contains('glitch') ? 'READ' : 'ACCESS');
+                } else {
+                    cursor.classList.remove('hovered');
+                }
+            });
+        }
+
+        function animateCursor() {
+            cursorX += (mouseX - cursorX) * 0.18;
+            cursorY += (mouseY - cursorY) * 0.18;
+            cursor.style.transform = `translate(${cursorX - 9}px, ${cursorY - 9}px)`;
+            requestAnimationFrame(animateCursor);
+        }
+        if (!isTouch) animateCursor();
+
+        /* ================= GLITCH TEXT TRIGGERS ================= */
+        const glitchEls = document.querySelectorAll('.glitch');
+        function fireGlitch(el) {
+            el.classList.add('active');
+            setTimeout(() => el.classList.remove('active'), 380);
+        }
+        glitchEls.forEach(el => {
+            el.addEventListener('mouseenter', () => fireGlitch(el));
+        });
+
+        let entropy = 0;
+        function randomGlitchTick() {
+            const chance = 0.02 + entropy * 0.12;
+            if (Math.random() < chance) {
+                const el = glitchEls[Math.floor(Math.random() * glitchEls.length)];
+                fireGlitch(el);
+            }
+            setTimeout(randomGlitchTick, 900);
+        }
+        randomGlitchTick();
+
+        /* ================= SCROLL-REVEAL CHOREOGRAPHY ================= */
+        const revealEls = document.querySelectorAll('.reveal');
+        const revealObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) entry.target.classList.add('in-view');
+            });
+        }, { threshold: 0.2 });
+        revealEls.forEach(el => revealObserver.observe(el));
+
+        /* ================= CORRUPTING CLOCK ================= */
+        // The clock represents elapsed session time, but as entropy (scroll depth)
+        // rises, digits increasingly scramble — time itself becomes unreliable.
+        const clockVal = document.getElementById('clock-val');
+        const bootTime = performance.now();
+        function formatClock(ms) {
+            const totalSec = Math.floor(ms / 1000);
+            const h = String(Math.floor(totalSec / 3600)).padStart(2, '0');
+            const m = String(Math.floor((totalSec % 3600) / 60)).padStart(2, '0');
+            const s = String(totalSec % 60).padStart(2, '0');
+            return `${h}:${m}:${s}`;
+        }
+        function corrupt(str, amount) {
+            if (amount <= 0) return str;
+            return str.split('').map(ch => {
+                if (ch === ':') return ch;
+                return Math.random() < amount ? Math.floor(Math.random() * 10) : ch;
+            }).join('');
+        }
+        function tickClock() {
+            const elapsed = performance.now() - bootTime;
+            const clean = formatClock(elapsed);
+            clockVal.textContent = corrupt(clean, entropy * 0.5);
+            requestAnimationFrame(tickClock);
+        }
+        tickClock();
+
+        /* ================= SCROLL / ENTROPY STATE ================= */
+        const scanlines = document.getElementById('scanlines');
+        const textScrim = document.getElementById('text-scrim');
+        const entropyVal = document.getElementById('entropy-val');
+        const depthVal = document.getElementById('depth-val');
+        const progressFill = document.getElementById('progress-fill');
+
+        function updateScroll() {
+            const doc = document.documentElement;
+            const max = doc.scrollHeight - doc.clientHeight;
+            entropy = max > 0 ? Math.min(window.scrollY / max, 1) : 0;
+            entropyVal.textContent = (entropy * 100).toFixed(1) + '%';
+            depthVal.textContent = String(Math.floor(entropy * 847)).padStart(3, '0');
+            progressFill.style.height = (entropy * 100) + '%';
+            scanlines.style.opacity = (entropy * 0.8).toFixed(2);
+            textScrim.style.opacity = entropy.toFixed(2);
+        }
+        window.addEventListener('scroll', updateScroll, { passive: true });
+        updateScroll();
+
+        /* ================= THREE.JS SCENE ================= */
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 100);
+        camera.position.z = 26;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        container.appendChild(renderer.domElement);
+
+        // Simplex noise (Ashima, condensed) + vertex displacement driven by scroll entropy
+        const vertexShader = `
+            uniform float uTime;
+            uniform float uEntropy;
+            varying float vDisplacement;
+
+            vec3 mod289(vec3 x){return x-floor(x*(1.0/289.0))*289.0;}
+            vec4 mod289(vec4 x){return x-floor(x*(1.0/289.0))*289.0;}
+            vec4 permute(vec4 x){return mod289(((x*34.0)+1.0)*x);}
+            vec4 taylorInvSqrt(vec4 r){return 1.79284291400159-0.85373472095314*r;}
+
+            float snoise(vec3 v){
+                const vec2 C=vec2(1.0/6.0,1.0/3.0);
+                const vec4 D=vec4(0.0,0.5,1.0,2.0);
+                vec3 i=floor(v+dot(v,C.yyy));
+                vec3 x0=v-i+dot(i,C.xxx);
+                vec3 g=step(x0.yzx,x0.xyz);
+                vec3 l=1.0-g;
+                vec3 i1=min(g.xyz,l.zxy);
+                vec3 i2=max(g.xyz,l.zxy);
+                vec3 x1=x0-i1+C.xxx;
+                vec3 x2=x0-i2+C.yyy;
+                vec3 x3=x0-D.yyy;
+                i=mod289(i);
+                vec4 p=permute(permute(permute(
+                    i.z+vec4(0.0,i1.z,i2.z,1.0))
+                    +i.y+vec4(0.0,i1.y,i2.y,1.0))
+                    +i.x+vec4(0.0,i1.x,i2.x,1.0));
+                float n_=0.142857142857;
+                vec3 ns=n_*D.wyz-D.xzx;
+                vec4 j=p-49.0*floor(p*ns.z*ns.z);
+                vec4 x_=floor(j*ns.z);
+                vec4 y_=floor(j-7.0*x_);
+                vec4 x=x_*ns.x+ns.yyyy;
+                vec4 y=y_*ns.x+ns.yyyy;
+                vec4 h=1.0-abs(x)-abs(y);
+                vec4 b0=vec4(x.xy,y.xy);
+                vec4 b1=vec4(x.zw,y.zw);
+                vec4 s0=floor(b0)*2.0+1.0;
+                vec4 s1=floor(b1)*2.0+1.0;
+                vec4 sh=-step(h,vec4(0.0));
+                vec4 a0=b0.xzyw+s0.xzyw*sh.xxyy;
+                vec4 a1=b1.xzyw+s1.xzyw*sh.zzww;
+                vec3 p0=vec3(a0.xy,h.x);
+                vec3 p1=vec3(a0.zw,h.y);
+                vec3 p2=vec3(a1.xy,h.z);
+                vec3 p3=vec3(a1.zw,h.w);
+                vec4 norm=taylorInvSqrt(vec4(dot(p0,p0),dot(p1,p1),dot(p2,p2),dot(p3,p3)));
+                p0*=norm.x; p1*=norm.y; p2*=norm.z; p3*=norm.w;
+                vec4 m=max(0.6-vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)),0.0);
+                m=m*m;
+                return 42.0*dot(m*m,vec4(dot(p0,x0),dot(p1,x1),dot(p2,x2),dot(p3,x3)));
+            }
+
+            void main(){
+                float noiseFreq = 0.15;
+                float amp = 0.6 + uEntropy * 2.2;
+                float n = snoise(position * noiseFreq + uTime * 0.08) * amp;
+                vDisplacement = n;
+                vec3 newPosition = position + normal * n;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(newPosition, 1.0);
+            }
+        `;
+
+        const fragmentShader = `
+            uniform float uEntropy;
+            varying float vDisplacement;
+            void main(){
+                vec3 signalColor = vec3(0.0, 0.941, 1.0);
+                vec3 warningColor = vec3(1.0, 0.165, 0.0);
+                float mixAmt = clamp(abs(vDisplacement) * 0.35 + uEntropy * 0.6, 0.0, 1.0);
+                vec3 color = mix(signalColor, warningColor, mixAmt);
+                float alpha = 0.4 - uEntropy * 0.18;
+                gl_FragColor = vec4(color, alpha);
+            }
+        `;
+
+        const geometry = new THREE.IcosahedronGeometry(10, 3);
+        const uniforms = {
+            uTime: { value: 0 },
+            uEntropy: { value: 0 }
+        };
+        const material = new THREE.ShaderMaterial({
+            uniforms,
+            vertexShader,
+            fragmentShader,
+            wireframe: true,
+            transparent: true
+        });
+        const mesh = new THREE.Mesh(geometry, material);
+        scene.add(mesh);
+
+        // Floating "data packet" points
+        const packetGeo = new THREE.BufferGeometry();
+        const packetCount = 180;
+        const packetPos = new Float32Array(packetCount * 3);
+        for (let i = 0; i < packetCount; i++) {
+            packetPos[i * 3] = (Math.random() - 0.5) * 60;
+            packetPos[i * 3 + 1] = (Math.random() - 0.5) * 60;
+            packetPos[i * 3 + 2] = (Math.random() - 0.5) * 60;
+        }
+        packetGeo.setAttribute('position', new THREE.BufferAttribute(packetPos, 3));
+        const packetMat = new THREE.PointsMaterial({ color: 0x00F0FF, size: 0.12, transparent: true, opacity: 0.5 });
+        const packets = new THREE.Points(packetGeo, packetMat);
+        scene.add(packets);
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        const clock = new THREE.Clock();
+        function animate() {
+            requestAnimationFrame(animate);
+            const t = clock.getElapsedTime();
+            uniforms.uTime.value = t;
+            uniforms.uEntropy.value = entropy;
+
+            mesh.rotation.y = t * 0.06 + entropy * 1.4;
+            mesh.rotation.x = t * 0.03 + entropy * 0.6;
+
+            const parallaxX = (mouseX / window.innerWidth - 0.5) * 2;
+            const parallaxY = (mouseY / window.innerHeight - 0.5) * 2;
+            camera.position.x += (parallaxX * 2 - camera.position.x) * 0.03;
+            camera.position.y += (-parallaxY * 2 - camera.position.y) * 0.03;
+            camera.lookAt(0, 0, 0);
+
+            packets.rotation.y = -t * 0.02;
+
+            renderer.render(scene, camera);
+        }
+        animate();
+    </script>
+</body>
+</html>
